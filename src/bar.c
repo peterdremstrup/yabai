@@ -1,4 +1,5 @@
 #include "bar.h"
+#include <CoreText/CoreText.h>
 
 extern struct space_manager g_space_manager;
 
@@ -57,18 +58,40 @@ static int bar_find_battery_life(bool *has_battery, bool *charging)
     return percent;
 }
 
+static CFDictionaryRef BFFontCreateFontFeatureCFDictionary(int featureType, int featureSelector) {
+    CFNumberRef featureTypeNumber = CFNumberCreate(NULL, kCFNumberIntType, &featureType);
+    CFNumberRef featureSelectorNumber = CFNumberCreate(NULL, kCFNumberIntType, &featureSelector);
+    const void * keys[2] = { kCTFontFeatureTypeIdentifierKey, kCTFontFeatureSelectorIdentifierKey };
+    const void * values[2] = { featureTypeNumber, featureSelectorNumber };
+    CFDictionaryRef feature = CFDictionaryCreate(NULL, (const void **)&keys, (const void **)&values, 2,
+                                                 &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFRelease(featureTypeNumber);
+    CFRelease(featureSelectorNumber);
+    return feature;
+}
+
 static CTFontRef bar_create_font(char *cstring)
 {
-    float size = 10.0f;
+    float size = 13.0f;
     char font_properties[2][255] = { {}, {} };
     sscanf(cstring, "%254[^:]:%254[^:]:%f", font_properties[0], font_properties[1], &size);
     CFStringRef font_family_name = CFStringCreateWithCString(NULL, font_properties[0], kCFStringEncodingUTF8);
     CFStringRef font_style_name = CFStringCreateWithCString(NULL, font_properties[1], kCFStringEncodingUTF8);
     CFNumberRef font_size = CFNumberCreate(NULL, kCFNumberFloat32Type, &size);
 
-    const void *keys[] = { kCTFontFamilyNameAttribute, kCTFontStyleNameAttribute, kCTFontSizeAttribute };
-    const void *values[] = { font_family_name, font_style_name, font_size };
-    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, array_count(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+		CFIndex index = 0;
+		CFDictionaryRef featureArray[1];
+		featureArray[index++] = BFFontCreateFontFeatureCFDictionary(kNumberSpacingType, kMonospacedNumbersSelector);
+
+    CFArrayRef font_features = CFArrayCreate(NULL, (const void **)&featureArray, index, &kCFTypeArrayCallBacks);
+
+    while (--index >= 0) {
+        CFRelease(featureArray[index]);
+    }
+
+    const void *keys[] = { kCTFontFamilyNameAttribute, kCTFontStyleNameAttribute, kCTFontSizeAttribute, kCTFontFeatureSettingsAttribute };
+    const void *values[] = { font_family_name, font_style_name, font_size, font_features };
+    CFDictionaryRef attributes = CFDictionaryCreate(NULL, (const void **)&keys, (const void **)&values, array_count(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CTFontDescriptorRef descriptor = CTFontDescriptorCreateWithAttributes(attributes);
     CTFontRef font = CTFontCreateWithFontDescriptor(descriptor, 0.0, NULL);
 
@@ -210,14 +233,23 @@ void bar_refresh(struct bar *bar)
     float time_line_width = 0;
     struct tm *timeinfo = localtime(&rawtime);
     if (timeinfo) {
+        const char DAY[7][5] = {
+          "Sun",
+          "Mon",
+          "Tue",
+          "Wed",
+          "Thu",
+          "Fri",
+          "Sat"
+        };
         char time[255];
-        snprintf(time, sizeof(time), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
+        snprintf(time, sizeof(time), "%02d:%02d:%02d %s %02d.%02d.%02d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, DAY[timeinfo->tm_wday], timeinfo->tm_mday, timeinfo->tm_mon+1, 1900 + timeinfo->tm_year);
         struct bar_line time_line = bar_prepare_line(bar->t_font, time, bar->foreground_color);
         CGPoint t_pos = bar_align_line(bar, time_line, ALIGN_RIGHT, ALIGN_CENTER);
         bar_draw_line(bar, time_line, t_pos.x, t_pos.y);
 
         CGPoint ti_pos = bar_align_line(bar, bar->clock_icon, 0, ALIGN_CENTER);
-        ti_pos.x = t_pos.x - bar->clock_icon.bounds.size.width - 5;
+        ti_pos.x = t_pos.x - bar->clock_icon.bounds.size.width - 7;
 
         CGPoint tu_pos = bar_align_line(bar, bar->clock_underline, 0, ALIGN_BOTTOM);
         tu_pos.x = tu_pos.x - bar->clock_underline.bounds.size.width / 2 - time_line.bounds.size.width / 2 - (bar->clock_icon.bounds.size.width + 5) / 2;
@@ -270,7 +302,7 @@ void bar_resize(struct bar *bar)
     CGSNewRegionWithRect(&bar->frame, &frame_region);
     SLSDisableUpdate(g_connection);
     SLSOrderWindow(g_connection, bar->id, -1, 0);
-    SLSSetWindowShape(g_connection, bar->id, 0.0f, 0.0f, frame_region);
+    SLSSetWindowShape(g_connection, bar->id, 0.0f, bounds.size.height - 26.0f, frame_region);
     bar_refresh(bar);
     SLSOrderWindow(g_connection, bar->id, 1, 0);
     SLSReenableUpdate(g_connection);
@@ -321,9 +353,9 @@ void bar_set_text_font(struct bar *bar, char *font_string)
     }
 
     bar->t_font = bar_create_font(bar->t_font_prop);
-    bar->space_underline = bar_prepare_line(bar->t_font, "______", rgba_color_from_hex(0xffd4d232));
+    bar->space_underline = bar_prepare_line(bar->t_font, "______", rgba_color_from_hex(0xffff0000));
     bar->power_underline = bar_prepare_line(bar->t_font, "__________", rgba_color_from_hex(0xffd75f5f));
-    bar->clock_underline = bar_prepare_line(bar->t_font, "__________", rgba_color_from_hex(0xff458588));
+    bar->clock_underline = bar_prepare_line(bar->t_font, "_________________________________", rgba_color_from_hex(0xff777777));
     bar_refresh(bar);
 }
 
@@ -473,7 +505,7 @@ void bar_create(struct bar *bar)
     bar->frame = (CGRect) {{0,0},{bounds.size.width, 26}};
 
     CGSNewRegionWithRect(&bar->frame, &frame_region);
-    SLSNewWindow(g_connection, 2, 0.0f, 0.0f, frame_region, &bar->id);
+    SLSNewWindow(g_connection, 2, 0.0f, bounds.size.height- 26.0f, frame_region, &bar->id);
     CFRelease(frame_region);
 
     SLSSetWindowResolution(g_connection, bar->id, 2.0f);
@@ -484,7 +516,7 @@ void bar_create(struct bar *bar)
     SLSSetWindowLevel(g_connection, bar->id, CGWindowLevelForKey(4));
     bar->context = SLWindowContextCreate(g_connection, bar->id, 0);
 
-    int refresh_frequency = 5;
+    int refresh_frequency = 1;
     bar->power_source = IOPSNotificationCreateRunLoopSource(power_handler, NULL);
     bar->refresh_timer = CFRunLoopTimerCreate(NULL, CFAbsoluteTimeGetCurrent() + refresh_frequency, refresh_frequency, 0, 0, timer_handler, NULL);
 
